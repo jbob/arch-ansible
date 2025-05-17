@@ -1,0 +1,65 @@
+---
+install_drive: /dev/vda
+boot_size: 1GB
+password: CHANGEME
+time_zone: Europe/Berlin
+keymap: de
+username: CHANGEME
+grub_cmdline: 'mitigations=off acpi_osi=\"Windows 2020\" mem_sleep_default=deep cryptdevice={{ install_drive }}{{ part_suffix}}2:cryptroot:allow-discards root=/dev/mapper/cryptroot'
+swap_size: 4g
+packages:
+  - git
+  - vim
+  - bluez
+  - bluez-utils
+  #- chromium
+  - firefox
+  #- bat
+  #- chrome-gnome-shell
+  #- ctags
+  - curl
+  #- docker
+  #- elementary-icon-theme
+  #- faenza-icon-theme
+  - flatpak
+  #- fzf
+  #- gimp
+  #- gitg
+  - gnome
+  - gnome-extra
+  - gnome-tweaks
+  #- gnu-netcat
+  #- hugo
+  #- jq
+  #- lsd
+  #- meld
+  #- networkmanager-fortisslvpn
+  #- networkmanager-openconnect
+  #- networkmanager-openvpn
+  #- networkmanager-pptp
+  #- networkmanager-strongswan
+  #- networkmanager-vpnc
+  #- nodejs
+  #- noto-fonts
+  #- noto-fonts-cjk
+  #- noto-fonts-emoji
+  #- npm
+  - ntfs-3g
+  #- powerline-common
+  #- powerline-fonts
+  #- remmina
+  #- rsync
+  #- signal-desktop
+  #- subversion
+  #- teamviewer
+  #- texlive-most
+  #- thunderbird
+  #- tmux
+  #- ttf-dejavu
+  #- ttf-liberation
+  #- ttf-linux-libertine
+  #- virt-viewer
+  #- zsh
+  #- zsh-syntax-highlighting
+  #- zsh-theme-powerlevel10k
+

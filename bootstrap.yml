@@ -1,0 +1,199 @@
+---
+- hosts: all
+  tasks:
+    - name: Abort if the host is not booted from the Arch install media
+      fail:
+        msg: This host is not booted from the Arch install media!
+      when: ansible_nodename != 'archiso'
+
+    - name: Synchronize clock via NTP
+      command: timedatectl set-ntp true
+
+    - name: Determine partition suffix
+      set_fact:
+        part_suffix: '{{ "p" if "nvme" in install_drive else "" }}'
+
+    - name: Wipe install drive and all its partitions
+      command: find /dev -wholename "{{ install_drive }}*" -exec wipefs --force --all {} \;
+      tags:
+        - wipefs
+
+    - name: Create boot partition
+      parted:
+        device: '{{ install_drive }}'
+        label: gpt
+        number: 1
+        part_end: '{{ boot_size }}'
+        name: boot
+        flags: [boot, esp]
+        state: present
+
+    - name: Create LUKS partition
+      parted:
+        device: '{{ install_drive }}'
+        label: gpt
+        number: 2
+        part_start: '{{ boot_size }}'
+        name: root
+        state: present
+
+    - name: LUKS setup
+      luks_device:
+        device: '{{ install_drive }}{{ part_suffix }}2'
+        state: opened
+        name: cryptroot
+        passphrase: '{{ password }}'
+
+    - name: Create boot filesystem
+      filesystem:
+        dev: '{{install_drive}}{{ part_suffix }}1'
+        fstype: vfat
+        force: yes
+
+    - name: Create BTRS
+      filesystem:
+        dev: /dev/mapper/cryptroot
+        fstype: btrfs
+        force: yes
+    - name: Mount BTRFS
+      mount:
+        path: /mnt/
+        src: /dev/mapper/cryptroot
+        fstype: btrfs
+        state: mounted
+    - name: Create @ subvolume
+      command: btrfs subvolume create /mnt/@
+    - name: Create @home subvolume
+      command: btrfs subvolume create /mnt/@home
+    - name: Create @swap subvolume
+      command: btrfs subvolume create /mnt/@swap
+    - name: Umount BTRFS
+      mount:
+        path: /mnt
+        state: '{{ item }}'
+      with_items:
+        - unmounted
+        - absent
+    - name: Mount @ subvolume
+      mount:
+        path: /mnt/
+        src: /dev/mapper/cryptroot
+        opts: noatime,compress=zstd,ssd,discard=async,space_cache=v2,subvol=@
+        fstype: btrfs
+        state: mounted
+    - name: Mount @home subvolume
+      mount:
+        path: /mnt/home
+        src: /dev/mapper/cryptroot
+        opts: noatime,compress=zstd,ssd,discard=async,space_cache=v2,subvol=@home
+        fstype: btrfs
+        state: mounted
+    - name: Mount @swap subvolume
+      mount:
+        path: /mnt/swap
+        src: /dev/mapper/cryptroot
+        opts: noatime,ssd,space_cache=v2,subvol=@swap
+        fstype: btrfs
+        state: mounted
+    - name: Mount boot partition
+      mount:
+        path: /mnt/boot
+        src: '{{ install_drive }}{{ part_suffix }}1'
+        opts: defaults
+        fstype: vfat
+        state: mounted
+
+    - name: Run pacstrap
+      command: pacstrap /mnt base linux linux-firmware intel-ucode btrfs-progs grub efibootmgr networkmanager wpa_supplicant mtools dosfstools base-devel openssh python sudo
+
+    - name: Set local timezone
+      command: 'arch-chroot /mnt ln -sf /usr/share/zoneinfo/{{ time_zone }} /etc/localtime'
+    - name: Generate adjtime file
+      command: arch-chroot /mnt hwclock --systohc
+
+    - name: Configure locale.gen
+      lineinfile:
+        dest: /mnt/etc/locale.gen
+        regexp: '{{ item.regex }}'
+        line: '{{ item.line }}'
+      loop:
+        - {regex: en_US\.UTF-8 UTF-8, line: en_US.UTF-8 UTF-8}
+        - {regex: en_US ISO-8859-1, line: en_US ISO-8859-1}
+    - name: Create locale.conf
+      copy:
+       content: LANG=en_US.UTF-8
+       dest: /mnt/etc/locale.conf
+    - name: Generate locales
+      command: arch-chroot /mnt locale-gen
+    - name: Set keymap
+      copy:
+        content: 'KEYMAP={{ keymap }}'
+        dest: /mnt/etc/vconsole.conf
+
+    - name: Set hostname
+      copy:
+        content: '{{ inventory_hostname }}'
+        dest: /mnt/etc/hostname
+    - name: Set up hosts file
+      copy:
+        content: |
+          127.0.0.1 localhost
+          ::1 localhost
+          127.0.1.1 {{ inventory_hostname }}
+        dest: /mnt/etc/hosts
+
+    - name: Add mkinitcpio.conf modules
+      lineinfile:
+        dest: /mnt/etc/mkinitcpio.conf
+        regexp: ^MODULES=
+        line: HOOKS=(btrfs)
+    - name: Add mkinitcpio.conf hooks
+      lineinfile:
+        dest: /mnt/etc/mkinitcpio.conf
+        regexp: ^HOOKS=
+        line: HOOKS=(base udev autodetect keyboard keymap modconf block encrypt filesystems fsck)
+    - name: Create new initramfs
+      command: arch-chroot /mnt mkinitcpio -p linux
+    - name: Add commandline information to grub config
+      lineinfile:
+        dest: /mnt/etc/default/grub
+        regexp: ^GRUB_CMDLINE_LINUX=
+        line: 'GRUB_CMDLINE_LINUX="{{ grub_cmdline }}"'
+    - name: Install grub
+      command: arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
+    - name: Create grub config
+      command: arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+
+    - name: Set root password
+      command: arch-chroot /mnt /bin/bash -c "echo 'root:{{ password }}' | chpasswd"
+    - name: Copy public ssh key to root
+      command: cp -a /root/.ssh/authorized_keys /mnt/root/.ssh/authorized_keys
+
+    - name: Create swapfile
+      command: btrfs filesystem mkswapfile --size={{ swap_size }} --uuid clear /mnt/swap/swapfile
+    - name: Sync changes to disk
+      command: sync
+      #- name: Truncate swap file
+      #  command: truncate -s 0 /mnt/swap/swapfile
+      #- name: Chattr swap file
+      #  command: chattr +C /mnt/swap/swapfile
+      #- name: Fill swap file with zeros
+      #  command: 'dd if=/dev/zero of=/mnt/swap/swapfile bs=1M count={{ swap_size }} status=progress'
+      #- name: Fix swap file permissions
+      #  command: chmod 600 /mnt/swap/swapfile
+      #- name: mkswap
+      #  command: mkswap /mnt/swap/swapfile
+    - name: Activate swap
+      command: swapon /mnt/swap/swapfile
+    - name: Generate fstab
+      shell: genfstab -L /mnt > /mnt/etc/fstab
+
+    - name: Enable fstrim.timer
+      command: arch-chroot /mnt systemctl enable fstrim.timer
+    - name: Enable NetworkManager.service
+      command: arch-chroot /mnt systemctl enable NetworkManager.service
+    - name: Enable sshd.service
+      command: arch-chroot /mnt systemctl enable sshd.service
+
+    #- name: Add swap to fstab
+    #  command: arch-chroot /mnt /bin/bash -c "echo '/swap/swapfile    none swap defaults 0 0' >> /etc/fstab"

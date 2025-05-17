@@ -173,16 +173,6 @@
       command: btrfs filesystem mkswapfile --size={{ swap_size }} --uuid clear /mnt/swap/swapfile
     - name: Sync changes to disk
       command: sync
-      #- name: Truncate swap file
-      #  command: truncate -s 0 /mnt/swap/swapfile
-      #- name: Chattr swap file
-      #  command: chattr +C /mnt/swap/swapfile
-      #- name: Fill swap file with zeros
-      #  command: 'dd if=/dev/zero of=/mnt/swap/swapfile bs=1M count={{ swap_size }} status=progress'
-      #- name: Fix swap file permissions
-      #  command: chmod 600 /mnt/swap/swapfile
-      #- name: mkswap
-      #  command: mkswap /mnt/swap/swapfile
     - name: Activate swap
       command: swapon /mnt/swap/swapfile
     - name: Generate fstab
@@ -194,6 +184,3 @@
       command: arch-chroot /mnt systemctl enable NetworkManager.service
     - name: Enable sshd.service
       command: arch-chroot /mnt systemctl enable sshd.service
-
-    #- name: Add swap to fstab
-    #  command: arch-chroot /mnt /bin/bash -c "echo '/swap/swapfile    none swap defaults 0 0' >> /etc/fstab"
